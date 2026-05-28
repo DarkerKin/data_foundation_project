@@ -1,0 +1,38 @@
+# config/sources.yml
+defaults:
+  db_url: postgresql          #change this 
+  batch_size: 5000 #change 
+  on_conflict: upsert           # options: append | upsert | fail
+
+#change these sources
+sources:
+  - name: customers_csv 
+    type: csv
+    path: data/customers.csv
+    target_table: stg_customers
+    pk: [customer_id]
+    schema:
+      customer_id: int
+      first_name: str
+      last_name: str
+      email: str
+      created_at: datetime
+    rules:
+      - rule: "email LIKE '%@%'"
+      - rule: "created_at NOT NULL"
+      - rule: "len(first_name) > 0"
+
+  - name: sales_json
+    type: json
+    path: data/sales.json
+    target_table: stg_sales
+    pk: [sale_id]
+    schema:
+      sale_id: int
+      customer_id: int
+      amount: float
+      currency: str
+      ts: datetime
+    rules:
+      - rule: "amount >= 0"
+      - rule: "currency IN ('USD','EUR','CAD')"
