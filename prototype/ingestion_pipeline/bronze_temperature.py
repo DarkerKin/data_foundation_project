@@ -35,12 +35,7 @@ date_queue   = queue.Queue()
 result_queue = queue.Queue()
 
 # ── Counters ──────────────────────────────────────────────────────────
-stats = {
-    "fetched"  : 0,
-    "inserted" : 0,
-    "skipped"  : 0,
-    "failed"   : 0,
-}
+stats = {"fetched": 0, "inserted": 0, "skipped": 0, "failed": 0}
 stats_lock = threading.Lock()
 
 def increment(key, n=1):
@@ -54,21 +49,24 @@ conn = psycopg2.connect(
 )
 cur = conn.cursor()
 
-# Create temperature table
+# ── CREATE TABLE — now includes precipitation_mm ─────────────────────
 cur.execute("""
-    CREATE TABLE IF NOT EXISTS temperature (
-        id          SERIAL      PRIMARY KEY,
-        time        DATE        UNIQUE,
-        temp_max    NUMERIC(5,2),
-        temp_min    NUMERIC(5,2)
+    CREATE TABLE IF NOT EXISTS bronze_temperature (
+        id               SERIAL      PRIMARY KEY,
+        time             DATE        UNIQUE,
+        temp_max         NUMERIC(5,2),
+        temp_min         NUMERIC(5,2),
+        precipitation_mm NUMERIC(6,2)
     )
 """)
+
+
 conn.commit()
 
-# Fetch already-processed dates so we don't re-fetch them
-cur.execute("SELECT time FROM temperature")
+# Fetch already-processed dates
+cur.execute("SELECT time FROM bronze_temperature WHERE precipitation_mm IS NOT NULL")
 already_done = {row[0].strftime("%Y-%m-%d") for row in cur.fetchall()}
-print(f"Already in temperature table : {len(already_done):,} dates")
+print(f"Already in bronze_temperature table : {len(already_done):,} dates")
 
 # Fetch distinct dates from source table
 cur.execute("SELECT COUNT(DISTINCT date_occurred) FROM bronze_crime_reports")
@@ -98,7 +96,6 @@ def producer():
 
         formatted_date = datetime.strptime(match.group(), "%m/%d/%Y").strftime("%Y-%m-%d")
 
-        # Skip if already in DB
         if formatted_date in already_done:
             increment("skipped")
             date_queue.task_done()
@@ -106,13 +103,12 @@ def producer():
 
         parsed_date = datetime.strptime(formatted_date, "%Y-%m-%d")
         today       = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
-        base_url    = "https://api.open-meteo.com/v1/forecast" if parsed_date >= today \
-                      else "https://archive-api.open-meteo.com/v1/archive"
+        base_url    = "https://archive-api.open-meteo.com/v1/archive"
 
         url = (
             f"{base_url}"
             f"?latitude=34.0522&longitude=-118.2437"
-            f"&daily=temperature_2m_max,temperature_2m_min"
+            f"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum"  # ← added
             f"&temperature_unit=fahrenheit"
             f"&start_date={formatted_date}&end_date={formatted_date}"
             f"&timezone=America%2FLos_Angeles"
@@ -122,21 +118,21 @@ def producer():
             rate_limiter.wait()
             response = requests.get(url, timeout=10)
 
-            # Backoff on rate limit
             if response.status_code == 429:
                 print(f"  [producer] Rate limited — backing off 60s...")
                 time.sleep(60)
                 response = requests.get(url, timeout=10)
 
             response.raise_for_status()
-            data     = response.json()
-            time_val = data["daily"]["time"][0]
-            temp_max = data["daily"]["temperature_2m_max"][0]
-            temp_min = data["daily"]["temperature_2m_min"][0]
+            data          = response.json()
+            time_val      = data["daily"]["time"][0]
+            temp_max      = data["daily"]["temperature_2m_max"][0]
+            temp_min      = data["daily"]["temperature_2m_min"][0]
+            precipitation = data["daily"]["precipitation_sum"][0]  # ← added (mm)
 
-            result_queue.put((time_val, temp_max, temp_min))
+            result_queue.put((time_val, temp_max, temp_min, precipitation))
             increment("fetched")
-            print(f"  [producer] {time_val}  max={temp_max}°F  min={temp_min}°F")
+            print(f"  [producer] {time_val}  max={temp_max}°F  min={temp_min}°F  precip={precipitation}mm")
 
         except requests.exceptions.Timeout:
             print(f"  [producer] Timeout        : {formatted_date}")
@@ -165,9 +161,12 @@ def consumer():
         if not batch:
             return
         db_cur.executemany("""
-            INSERT INTO temperature (time, temp_max, temp_min)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (time) DO NOTHING
+            INSERT INTO bronze_temperature (time, temp_max, temp_min, precipitation_mm)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (time) DO UPDATE SET
+                temp_max         = EXCLUDED.temp_max,
+                temp_min         = EXCLUDED.temp_min,
+                precipitation_mm = EXCLUDED.precipitation_mm
         """, batch)
         db_conn.commit()
         increment("inserted", len(batch))
@@ -194,13 +193,11 @@ def consumer():
 start_time = time.time()
 print(f"\nStarting pipeline with {API_WORKERS} workers...\n")
 
-# Fill date queue
 for (date_occurred,) in db_rows:
     date_queue.put(date_occurred)
 for _ in range(API_WORKERS):
     date_queue.put(SENTINEL)
 
-# Start threads
 producers = [threading.Thread(target=producer) for _ in range(API_WORKERS)]
 consumer_thread = threading.Thread(target=consumer)
 

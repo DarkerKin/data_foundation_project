@@ -13,7 +13,6 @@ services:
       POSTGRES_DB: mydb
     volumes:
       - pg_data:/var/lib/postgresql/data   # Persist data across restarts
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql  # Optional: run SQL on first start
 
   adminer:
     image: adminer
