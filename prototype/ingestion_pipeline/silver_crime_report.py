@@ -20,22 +20,6 @@ cur.execute("""
     USING TO_DATE(TRIM(date_occurred), 'MM/DD/YYYY');
 """)
 
-#join and add the avg temp and precipitation from silver temp to the silver crime table
-cur.execute("""
-    ALTER TABLE silver_crime_reports
-    ADD COLUMN average_temp NUMERIC,
-    ADD COLUMN precipitation_mm NUMERIC;
-""")
-
-cur.execute("""
-    UPDATE silver_crime_reports r
-    SET 
-        average_temp = t.average_temperature,
-        precipitation_mm = t.precipitation_mm
-    FROM silver_temperature t
-    WHERE r.date_occurred = t.time;
-""")
-
 #join renamed the descent to more definitive 
 cur.execute("""
     UPDATE silver_crime_reports

@@ -9,10 +9,7 @@ conn = psycopg2.connect(
 cur = conn.cursor()
 
 cur.execute("""
-    SELECT division_name, COUNT(division_name)
-    FROM silver_crime_reports
-    GROUP BY division_name
-    ORDER BY COUNT(division_name) DESC
+    SELECT * FROM GOLD_CRIME_REPORT_BY_AREA
 """)
 db_rows = cur.fetchall()
 

@@ -2,3 +2,4 @@ virtual-environment
 data/crime_data.csv
 .env
 .venv
+study
