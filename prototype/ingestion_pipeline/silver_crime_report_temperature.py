@@ -10,7 +10,7 @@ cur = conn.cursor()
 cur.execute("""
     CREATE TABLE silver_crime_report_and_temperatures AS
     SELECT report_id, date_occurred, time_occurred, division_code, division_name, reporting_district, crime_code,crime_description, victim_age, victim_sex, victim_descent, weapon_code, weapon_description,address, latitude, longitude 
-    FROM bronze_crime_reports
+    FROM silver_crime_reports
 """)
 
 #join and add the avg temp and precipitation from silver temp to the silver crime table
