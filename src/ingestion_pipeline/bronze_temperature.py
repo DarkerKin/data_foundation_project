@@ -80,6 +80,9 @@ conn.close()
 
 # ── 2. Producer ───────────────────────────────────────────────────────
 def producer():
+    MAX_RETRIES = 3  # Maximum number of retry attempts
+    INITIAL_BACKOFF = 2  # Start with a 2-second wait
+
     while True:
         item = date_queue.get()
         if item is SENTINEL:
@@ -101,54 +104,57 @@ def producer():
             date_queue.task_done()
             continue
 
-        parsed_date = datetime.strptime(formatted_date, "%Y-%m-%d")
-        today       = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
-        base_url    = "https://archive-api.open-meteo.com/v1/archive"
-
+        base_url = "https://archive-api.open-meteo.com/v1/archive"
         url = (
             f"{base_url}"
             f"?latitude=34.0522&longitude=-118.2437"
-            f"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum"  # ← added
+            f"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum"
             f"&temperature_unit=fahrenheit"
             f"&start_date={formatted_date}&end_date={formatted_date}"
             f"&timezone=America%2FLos_Angeles"
         )
 
-        try:
-            rate_limiter.wait()
-            response = requests.get(url, timeout=10)
+        success = False
+        backoff = INITIAL_BACKOFF
 
-            if response.status_code == 429:
-                print(f"  [producer] Rate limited — backing off 60s...")
-                time.sleep(60)
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                rate_limiter.wait()
                 response = requests.get(url, timeout=10)
 
-            response.raise_for_status()
-            data          = response.json()
-            time_val      = data["daily"]["time"][0]
-            temp_max      = data["daily"]["temperature_2m_max"][0]
-            temp_min      = data["daily"]["temperature_2m_min"][0]
-            precipitation = data["daily"]["precipitation_sum"][0]  # ← added (mm)
+                # Special handle for 429 Rate Limit
+                if response.status_code == 429:
+                    print(f"  [producer] Rate limited (429) on {formatted_date}. Attempt {attempt}/{MAX_RETRIES}. Backing off 60s...")
+                    time.sleep(60)
+                    continue  # Jump to next iteration of the loop to try again
 
-            result_queue.put((time_val, temp_max, temp_min, precipitation))
-            increment("fetched")
-            print(f"  [producer] {time_val}  max={temp_max}°F  min={temp_min}°F  precip={precipitation}mm")
+                response.raise_for_status()
+                data          = response.json()
+                time_val      = data["daily"]["time"][0]
+                temp_max      = data["daily"]["temperature_2m_max"][0]
+                temp_min      = data["daily"]["temperature_2m_min"][0]
+                precipitation = data["daily"]["precipitation_sum"][0]
 
-        except requests.exceptions.Timeout:
-            print(f"  [producer] Timeout        : {formatted_date}")
-            increment("failed")
-        except requests.exceptions.HTTPError as e:
-            print(f"  [producer] HTTP error     : {formatted_date} — {e}")
-            increment("failed")
-        except requests.exceptions.RequestException as e:
-            print(f"  [producer] Request failed : {formatted_date} — {e}")
-            increment("failed")
-        except (KeyError, IndexError) as e:
-            print(f"  [producer] Bad response   : {formatted_date} — {e}")
-            increment("failed")
-        finally:
-            date_queue.task_done()
+                result_queue.put((time_val, temp_max, temp_min, precipitation))
+                increment("fetched")
+                print(f"  [producer] {time_val}  max={temp_max}°F  min={temp_min}°F  precip={precipitation}mm")
+                success = True
+                break  # Break out of the retry loop on success
 
+            except (requests.exceptions.RequestException, KeyError, IndexError) as e:
+                print(f"  [producer] Attempt {attempt}/{MAX_RETRIES} failed for {formatted_date}: {e}")
+                if attempt < MAX_RETRIES:
+                    print(f"  [producer] Retrying in {backoff} seconds...")
+                    time.sleep(backoff)
+                    backoff *= 2  # Exponentially increase the wait time
+
+        # If it went through all retries and still didn't succeed
+        if not success:
+            print(f"  [producer] Permanent failure for date: {formatted_date}")
+            increment("failed")
+
+        date_queue.task_done()
+        
 # ── 3. Consumer ───────────────────────────────────────────────────────
 def consumer():
     db_conn = psycopg2.connect(

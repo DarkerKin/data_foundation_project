@@ -1,5 +1,7 @@
 import psycopg2
-import csv
+from psycopg2.extras import execute_values
+import pandas as pd
+import numpy as np
 
 # ── 1. Connect ───────────────────────────────────────────────────────
 conn = psycopg2.connect(
@@ -78,29 +80,30 @@ column_map = {
 db_columns = list(column_map.values())
 csv_columns = list(column_map.keys())
 
+# execute_values dynamically maps a list of tuples to this format: 
+# INSERT INTO table (cols) VALUES %s, where %s becomes (%s, %s...), (%s, %s...)
 insert_query = f"""
     INSERT INTO bronze_crime_reports ({', '.join(db_columns)})
-    VALUES ({', '.join(['%s'] * len(db_columns))})
+    VALUES %s
 """
 
-with open("./data/crime_data.csv", "r") as f:
-    reader = csv.DictReader(f)
-    batch = []
+csv_file_path = "./data/crime_data.csv"
 
-    for row in reader:
-        values = tuple(row[col] if row[col] != '' else None for col in csv_columns)
-        batch.append(values)
-
-        # Insert in batches of 1000 for performance
-        if len(batch) == 1000:
-            cur.executemany(insert_query, batch)
-            conn.commit()
-            batch = []
-
-    # Insert remaining rows
-    if batch:
-        cur.executemany(insert_query, batch)
-        conn.commit()
+# Stream CSV in chunks using only Pandas and raw SQL strings
+for chunk in pd.read_csv(csv_file_path, usecols=csv_columns, chunksize=1000):
+    
+    # 1. Enforce specific column ordering matching your mapping dictionary
+    chunk = chunk[csv_columns]
+    
+    # 2. Map Pandas missing types (NaN/None) to Python None for raw SQL NULL compatibility
+    chunk = chunk.replace({np.nan: None})
+    
+    # 3. Fast extraction to Python list of tuples
+    batch = list(chunk.itertuples(index=False, name=None))
+    
+    # 4. Use psycopg2's native raw multi-row insert optimization
+    execute_values(cur, insert_query, batch)
+    conn.commit()
 
 print("Done!")
 cur.close()

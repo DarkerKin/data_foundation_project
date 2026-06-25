@@ -14,6 +14,7 @@ conn = get_connection()
 
 # ── Selections now live in the sidebar ──────────────────────────
 year = st.sidebar.selectbox("Select Year", ['-']+ list(range(2020, 2025)))
+# limit = st.sidebar
 
 @st.cache_data
 def get_crime_by_day_in_each_year(year):
@@ -47,7 +48,7 @@ sns.regplot(
 # Customize appearance
 plt.xlim(daily_data['daily_avg_temperature_celsius'].min()-5, daily_data['daily_avg_temperature_celsius'].max()+5)
 plt.title('Average Temperature vs Daily Crime Counts', fontsize=16)
-plt.xlabel('Average Temperature (°C)', fontsize=12)
+plt.xlabel('Average Temperature (°F)', fontsize=12)
 plt.ylabel('Daily Crime Counts', fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.6)
 
