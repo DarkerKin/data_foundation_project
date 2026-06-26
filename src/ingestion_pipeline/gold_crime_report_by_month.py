@@ -8,7 +8,7 @@ cur = conn.cursor()
 
 # Postgres row count by year
 cur.execute("""
-    CREATE TABLE gold_crime_report_by_month AS
+    CREATE VIEW gold_crime_report_by_month AS
     SELECT TO_CHAR(date_occurred, 'Month') AS month_name, COUNT(*) 
     FROM silver_crime_reports 
     WHERE EXTRACT(YEAR FROM date_occurred) = 2024

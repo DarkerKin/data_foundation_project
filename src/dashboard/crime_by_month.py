@@ -10,6 +10,8 @@ def get_connection():
 
 conn = get_connection()
 
+st.header("Crime Count Per Month",text_alignment="center")
+
 # ── Selections now live in the sidebar ──────────────────────────
 year = st.sidebar.selectbox("Select Year", list(range(2020, 2025)))
 

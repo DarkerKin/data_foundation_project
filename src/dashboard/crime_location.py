@@ -10,38 +10,40 @@ def get_connection():
 
 conn = get_connection()
 
+st.header("Crime Location in LA", text_alignment="center")
+
 # ── Selections now live in the sidebar ──────────────────────────
 year = st.sidebar.selectbox("Select Year", list(range(2020, 2025)))
 
 @st.cache_data
-def get_crime_codes_by_year(year):
+def get_crime_descriptions_by_year(year):
     query = """
-        SELECT DISTINCT crime_code
+        SELECT DISTINCT crime_description
         FROM gold_crime_report_by_location
         WHERE EXTRACT(YEAR FROM date_occurred) = %s
-        ORDER BY crime_code;
+        ORDER BY crime_description;
     """
     return pd.read_sql_query(query, conn, params=(year,))
 
-crime_codes_df = get_crime_codes_by_year(year)
+crime_descriptions_df = get_crime_descriptions_by_year(year)
 
-if crime_codes_df.empty:
+if crime_descriptions_df.empty:
     st.sidebar.warning("No crime data found for this year.")
     st.stop()
 
-crime_code = st.sidebar.selectbox("Select Crime Code", crime_codes_df["crime_code"])
+crime_description = st.sidebar.selectbox("Select Crime Description", crime_descriptions_df["crime_description"])
 
 @st.cache_data
-def get_crime_locations(year, crime_code):
+def get_crime_locations(year, crime_description):
     query = """
         SELECT latitude, longitude
         FROM gold_crime_report_by_location
         WHERE EXTRACT(YEAR FROM date_occurred) = %s
-          AND crime_code = %s;
+          AND crime_description = %s;
     """
-    return pd.read_sql_query(query, conn, params=(year, crime_code))
+    return pd.read_sql_query(query, conn, params=(year, crime_description))
 
-df = get_crime_locations(year, crime_code)
+df = get_crime_locations(year, crime_description)
 df = df.dropna(subset=["latitude", "longitude"])
 
 if df.empty:
